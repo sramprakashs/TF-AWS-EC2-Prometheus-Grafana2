@@ -1,103 +1,81 @@
-# Remove the data source block for checking the existing security group1
+#Vpc 
 
-# Create a new security group for Prometheus and Grafana
-resource "aws_security_group" "prometheus_grafana_sg" {
-  name        = "prometheus_grafana_sg"
-  description = "Allow Prometheus and Grafana traffic"
+module "vpc" { 
+  source = "terraform-aws-modules/vpc/aws" 
+  name = "jenkins_vpc" 
+  cidr = var.vpc_cidr 
+  azs            = data.aws_availability_zones.azs.names 
+  public_subnets = var.public_subnets 
+  enable_dns_hostnames    = true 
+  map_public_ip_on_launch = true 
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Open SSH access to all IPs
-  }
+  tags = { 
+    Name        = "jenkins_vpc" 
+    Terraform   = "true" 
+    Environment = "dev" 
+  } 
+  public_subnet_tags = { 
+    Name = "jenkins_subnet" 
+  } 
+} 
 
-  ingress {
-    from_port   = 9090
-    to_port     = 9090
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Open Prometheus port
-  }
+ 
 
-  ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Open Grafana port
-  }
+#sg 
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"] # Allow all outbound traffic
-  }
+module "sg" { 
+  source = "terraform-aws-modules/security-group/aws" 
+  name        = "jenkins_sg" 
+  description = "Security group for jenkins server" 
+  vpc_id      = module.vpc.vpc_id 
 
-  tags = {
-    Name = "PrometheusGrafanaSG"
-  }
-}
+  ingress_with_cidr_blocks = [ 
+    {
+      from_port   = 0 
+      to_port     = 0 
+      protocol    = "-1" 
+      description = "HTTP" 
+      cidr_blocks = "0.0.0.0/0" 
+    }, 
+    { 
+      from_port   = 22 
+      to_port     = 22 
+      protocol    = "tcp" 
+      description = "SSH" 
+      cidr_blocks = "0.0.0.0/0" 
+    } 
+  ] 
+  egress_with_cidr_blocks = [ 
+    { 
+      from_port   = 0 
+      to_port     = 0 
+      protocol    = "-1" 
+      cidr_blocks = "0.0.0.0/0" 
+    } 
+  ]
+  tags = { 
+    Name = "jenkins_sg" 
+  } 
+} 
+ 
+#ec2 
 
-# Define the EC2 instance and attach the recreated security group
-resource "aws_instance" "prometheus_grafana" {
-  ami           = "ami-0866a3c8686eaeeba"  # Replace with the correct AMI ID-ami-0583d8c7a9c35822c
-  instance_type = "t2.micro"
-  key_name      = "Ramprakash-Amazon3"
+module "ec2_instance" { 
+  source = "terraform-aws-modules/ec2-instance/aws" 
+  name = "jenkins_server" 
+  instance_type               = var.instance_type 
+  ami                         = data.aws_ami.example.id 
+  key_name                    = "ayush2" 
+  monitoring                  = true 
+  vpc_security_group_ids      = [module.sg.security_group_id] 
+  subnet_id                   = module.vpc.public_subnets[0] 
+  associate_public_ip_address = true 
+  availability_zone           = data.aws_availability_zones.azs.names[0] 
+  user_data                   = file("jenkins-install.sh") 
 
-  # Attach the recreated security group
-  vpc_security_group_ids = [aws_security_group.prometheus_grafana_sg.id]
-
-  user_data = <<-EOF
-    #!/bin/bash
-    sudo yum update -y
-    sudo amazon-linux-extras install docker -y
-    sudo service docker start
-    sudo usermod -a -G docker ec2-user
-
-    # Install Docker Compose
-    sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-
-    # Create Prometheus and Grafana containers
-    mkdir /home/ec2-user/monitoring
-    cd /home/ec2-user/monitoring
-
-    # Docker Compose YAML for Prometheus and Grafana
-    cat <<EOL > docker-compose.yml
-    version: '3'
-
-    services:
-      prometheus:
-        image: prom/prometheus
-        container_name: prometheus
-        ports:
-          - "9090:9090"
-        volumes:
-          - ./prometheus.yml:/etc/prometheus/prometheus.yml
-
-      grafana:
-        image: grafana/grafana
-        container_name: grafana
-        ports:
-          - "3000:3000"
-    EOL
-
-    # Prometheus configuration
-    cat <<EOL > prometheus.yml
-    global:
-      scrape_interval: 15s
-
-    scrape_configs:
-      - job_name: "prometheus"
-        static_configs:
-          - targets: ["localhost:9090"]
-    EOL
-
-    # Start Docker containers
-    sudo docker-compose up -d
-  EOF
-
-  tags = {
-    Name = "Prometheus-Grafana"
-  }
-}
+  tags = { 
+    Name        = "jankins_server" 
+    Terraform   = "true" 
+    Environment = "dev" 
+  } 
+} 
