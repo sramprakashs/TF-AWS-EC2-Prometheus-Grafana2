@@ -1,4 +1,4 @@
-name: Terraform AWS EC2 Prometheus Grafana Deploy
+name: Terraform AWS EC2 instance
 
 on:
   push:
